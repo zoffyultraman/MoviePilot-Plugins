@@ -33,7 +33,7 @@ class ChangeTmdbHosts(_PluginBase):
     plugin_order = 99
     # 可使用的用户级别
     auth_level = 1
-        # 私有属性
+    # 私有属性
     _plugin_id = None
     _previous_state = False
     
