@@ -51,7 +51,7 @@ from app.plugins.mediacovergenerator.utils.color_helper import ColorHelper
 
 class MediaCoverGenerator(_PluginBase):
     # 插件名称
-    plugin_name = "媒体库封面生成"
+    plugin_name = "Emby媒体库封面生成"
     # 插件描述
     plugin_desc = "生成媒体库动态/静态封面，支持 Emby/Jellyfin"
     # 插件图标
