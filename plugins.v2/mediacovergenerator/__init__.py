@@ -102,7 +102,7 @@ class MediaCoverGenerator(_PluginBase):
     _font_path = ''
     _covers_path = ''
     _tab = 'style-tab'
-    _multi_1_blur = False
+    _multi_1_blur = True
     _zh_font_size = None
     _en_font_size = None
     _blur_size = 50
