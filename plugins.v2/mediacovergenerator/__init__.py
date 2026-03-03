@@ -53,11 +53,11 @@ class MediaCoverGenerator(_PluginBase):
     # 插件名称
     plugin_name = "媒体库封面生成"
     # 插件描述
-    plugin_desc = "自动生成媒体库封面，支持 Emby，Jellyfin"
+    plugin_desc = "生成媒体库动态/静态封面，支持 Emby/Jellyfin"
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/icons/emby.png"
     # 插件版本
-    plugin_version = "0.9.0"
+    plugin_version = "0.9.1"
     # 插件作者
     plugin_author = "justzerock"
     # 作者主页
@@ -121,13 +121,13 @@ class MediaCoverGenerator(_PluginBase):
     _custom_width = 1920
     _custom_height = 1080
     _resolution_config = None
-    _animation_duration = 12
-    _animation_scroll = 'down'
-    _animation_fps = 12
+    _animation_duration = 8
+    _animation_scroll = 'alternate'
+    _animation_fps = 24
     _animation_format = 'apng'
     _animation_resolution = '320x180'
-    _animation_reduce_colors = 'strong'
-    _animated_2_image_count = 5
+    _animation_reduce_colors = 'medium'
+    _animated_2_image_count = 6
     _animated_2_departure_type = 'fly'
     _style_naming_v2 = True
     _sanitize_log_cache = set()
@@ -204,8 +204,8 @@ class MediaCoverGenerator(_PluginBase):
                 self._animation_duration = int(config.get("animation_duration", 12))
             except (ValueError, TypeError):
                 self._animation_duration = 12
-            self._animation_scroll = config.get("animation_scroll", "down")
-            self._animation_scroll = config.get("animation_scroll", "down")
+            self._animation_scroll = config.get("animation_scroll", "alternate")
+            self._animation_scroll = config.get("animation_scroll", "alternate")
             self._animation_fps = int(config.get("animation_fps", 12))
             self._animation_format = config.get("animation_format", "apng")
             if self._animation_format == "webp":
@@ -213,15 +213,15 @@ class MediaCoverGenerator(_PluginBase):
             if self._animation_format not in ["apng", "gif"]:
                 self._animation_format = "apng"
             self._animation_resolution = config.get("animation_resolution", "320x180")
-            animation_reduce_colors = config.get("animation_reduce_colors", "strong")
+            animation_reduce_colors = config.get("animation_reduce_colors", "medium")
             if isinstance(animation_reduce_colors, bool):
-                self._animation_reduce_colors = "strong" if animation_reduce_colors else "off"
+                self._animation_reduce_colors = "medium" if animation_reduce_colors else "off"
             elif animation_reduce_colors in ["off", "medium", "strong"]:
                 self._animation_reduce_colors = animation_reduce_colors
             else:
-                self._animation_reduce_colors = "strong"
+                self._animation_reduce_colors = "medium"
 
-            self._animated_2_image_count = config.get("animated_2_image_count", 5)
+            self._animated_2_image_count = config.get("animated_2_image_count", 6)
             self._animated_2_departure_type = config.get("animated_2_departure_type", "fly")
 
             if self._resolution not in ["1080p", "720p", "480p"]:
@@ -1689,13 +1689,13 @@ class MediaCoverGenerator(_PluginBase):
             "custom_height": 1080,
             "bg_color_mode": "auto",
             "custom_bg_color": "",
-            "animation_duration": 12,
-            "animation_scroll": "down",
-            "animation_fps": 12,
+            "animation_duration": 8,
+            "animation_scroll": "alternate",
+            "animation_fps": 24,
             "animation_format": "apng",
             "animation_resolution": "320x180",
-            "animation_reduce_colors": "strong",
-            "animated_2_image_count": 5,
+            "animation_reduce_colors": "medium",
+            "animated_2_image_count": 6,
             "style_naming_v2": True,
         }
 
