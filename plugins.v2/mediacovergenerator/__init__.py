@@ -2465,12 +2465,7 @@ class MediaCoverGenerator(_PluginBase):
                                                                 },
                                                     "text": "立即生成当前风格",
                                                     "events": {"click": {"api": "plugin/MediaCoverGenerator/generate_now", "method": "post"}},
-                                                },
-                                                {
-                                                    "component": "div",
-                                                    "props": {"class": "text-caption text-medium-emphasis ml-2 mb-2 d-inline-block"},
-                                                    "text": "首次运行请先勾选服务器并保存",
-                                                },
+                                                }
                                             ],
                                         }
                                     ],
