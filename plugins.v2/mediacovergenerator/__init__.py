@@ -1,6 +1,7 @@
 import base64
 import datetime
 import hashlib
+import mimetypes
 import os
 import re
 import ast
@@ -9,7 +10,7 @@ import time
 import shutil
 import random
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote, unquote
 from typing import Any, Dict, List, Optional, Tuple
 from collections import defaultdict
 import pytz
@@ -39,10 +40,6 @@ from app.plugins.mediacovergenerator.style.style_animated_1 import create_style_
 from app.plugins.mediacovergenerator.style.style_animated_2 import create_style_animated_2
 from app.plugins.mediacovergenerator.style.style_animated_3 import create_style_animated_3
 from app.plugins.mediacovergenerator.style.style_animated_4 import create_style_animated_4
-from app.plugins.mediacovergenerator.static.static_1 import static_1
-from app.plugins.mediacovergenerator.static.static_2 import static_2
-from app.plugins.mediacovergenerator.static.static_3  import static_3
-from app.plugins.mediacovergenerator.static.static_4 import static_4
 from app.plugins.mediacovergenerator.utils.image_manager import ResolutionConfig, ImageResourceManager
 from app.plugins.mediacovergenerator.utils.network_helper import NetworkHelper, validate_font_file
 from app.plugins.mediacovergenerator.utils.performance_helper import PerformanceMonitor, ProgressTracker, memory_efficient_operation
@@ -57,7 +54,7 @@ class MediaCoverGenerator(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/icons/emby.png"
     # 插件版本
-    plugin_version = "0.9.1"
+    plugin_version = "0.9.2"
     # 插件作者
     plugin_author = "justzerock"
     # 作者主页
@@ -111,13 +108,13 @@ class MediaCoverGenerator(_PluginBase):
     _seen_keys = set()
     _zh_font_custom = ''
     _en_font_custom = ''
-    _zh_font_preset = ''
-    _en_font_preset = ''
+    _zh_font_preset = 'chaohei'
+    _en_font_preset = 'EmblemaOne'
     _zh_font_offset = ''
     _title_spacing = ''
     _en_line_spacing = ''
     _title_scale = 1.0
-    _resolution = '1080p'
+    _resolution = '480p'
     _custom_width = 1920
     _custom_height = 1080
     _resolution_config = None
@@ -131,6 +128,12 @@ class MediaCoverGenerator(_PluginBase):
     _animated_2_departure_type = 'fly'
     _style_naming_v2 = True
     _sanitize_log_cache = set()
+    _clean_images = False
+    _clean_fonts = False
+    _save_recent_covers = True
+    _covers_history_limit_per_library = 10
+    _covers_page_history_limit = 50
+    _page_tab = "generate-tab"
 
     def __init__(self):
         super().__init__()
@@ -140,8 +143,8 @@ class MediaCoverGenerator(_PluginBase):
         self.mediaserver_helper = MediaServerHelper()   
         data_path = self.get_data_path()
         (data_path / 'fonts').mkdir(parents=True, exist_ok=True)
-        (data_path / 'covers').mkdir(parents=True, exist_ok=True)
-        self._covers_path = data_path / 'covers'
+        (data_path / 'input').mkdir(parents=True, exist_ok=True)
+        self._covers_path = data_path / 'input'
         self._font_path = data_path / 'fonts'
         if config:
             self._enabled = config.get("enabled")
@@ -174,7 +177,7 @@ class MediaCoverGenerator(_PluginBase):
             self._cover_style_base = config.get("cover_style_base", default_base)
             self._cover_style_variant = config.get("cover_style_variant", default_variant)
             self._cover_style = self.__compose_cover_style(self._cover_style_base, self._cover_style_variant)
-            self._multi_1_blur = config.get("multi_1_blur")
+            self._multi_1_blur = config.get("multi_1_blur", True)
             self._zh_font_size = config.get("zh_font_size", 170)
             self._en_font_size = config.get("en_font_size", 75)
             try:
@@ -186,10 +189,10 @@ class MediaCoverGenerator(_PluginBase):
             except (ValueError, TypeError):
                 self._color_ratio = 0.8
             self._use_primary = config.get("use_primary")
-            self._zh_font_custom = config.get("zh_font_custom")
-            self._en_font_custom = config.get("en_font_custom")
-            self._zh_font_preset = config.get("zh_font_preset")
-            self._en_font_preset = config.get("en_font_preset")
+            self._zh_font_custom = config.get("zh_font_custom", "")
+            self._en_font_custom = config.get("en_font_custom", "")
+            self._zh_font_preset = config.get("zh_font_preset", "chaohei")
+            self._en_font_preset = config.get("en_font_preset", "EmblemaOne")
             self._zh_font_offset = config.get("zh_font_offset")
             self._title_spacing = config.get("title_spacing")
             self._en_line_spacing = config.get("en_line_spacing")
@@ -197,7 +200,7 @@ class MediaCoverGenerator(_PluginBase):
                 self._title_scale = float(config.get("title_scale", 1.0))
             except (ValueError, TypeError):
                 self._title_scale = 1.0
-            self._resolution = config.get("resolution", "1080p")
+            self._resolution = config.get("resolution", "480p")
             self._custom_width = config.get("custom_width", 1920)
             self._custom_height = config.get("custom_height", 1080)
             try:
@@ -205,8 +208,10 @@ class MediaCoverGenerator(_PluginBase):
             except (ValueError, TypeError):
                 self._animation_duration = 12
             self._animation_scroll = config.get("animation_scroll", "alternate")
-            self._animation_scroll = config.get("animation_scroll", "alternate")
-            self._animation_fps = int(config.get("animation_fps", 12))
+            try:
+                self._animation_fps = int(config.get("animation_fps", 12))
+            except (ValueError, TypeError):
+                self._animation_fps = 12
             self._animation_format = config.get("animation_format", "apng")
             if self._animation_format == "webp":
                 self._animation_format = "gif"
@@ -223,9 +228,29 @@ class MediaCoverGenerator(_PluginBase):
 
             self._animated_2_image_count = config.get("animated_2_image_count", 6)
             self._animated_2_departure_type = config.get("animated_2_departure_type", "fly")
+            self._clean_images = config.get("clean_images", False)
+            self._clean_fonts = config.get("clean_fonts", False)
+            self._save_recent_covers = config.get("save_recent_covers", True)
+            self._covers_history_limit_per_library = self.__clamp_value(
+                config.get("covers_history_limit_per_library", 10),
+                1,
+                100,
+                10,
+                "covers_history_limit_per_library[init_plugin]",
+                int,
+            )
+            self._covers_page_history_limit = self.__clamp_value(
+                config.get("covers_page_history_limit", 50),
+                1,
+                500,
+                50,
+                "covers_page_history_limit[init_plugin]",
+                int,
+            )
+            self._page_tab = config.get("page_tab", "generate-tab")
 
             if self._resolution not in ["1080p", "720p", "480p"]:
-                self._resolution = "1080p"
+                self._resolution = "480p"
             self._animation_resolution = "320x180"
 
         self._animated_2_image_count = self.__clamp_value(
@@ -236,6 +261,10 @@ class MediaCoverGenerator(_PluginBase):
             "animated_2 image_count[init_plugin]",
             int,
         )
+        if self._animated_2_departure_type not in ["fly", "fade", "crossfade"]:
+            self._animated_2_departure_type = "fly"
+        if self._animation_scroll not in ["down", "up", "alternate", "alternate_reverse"]:
+            self._animation_scroll = "alternate"
         self._bg_color_mode = (config or {}).get("bg_color_mode", "auto")
         self._custom_bg_color = (config or {}).get("custom_bg_color", "")
 
@@ -244,7 +273,7 @@ class MediaCoverGenerator(_PluginBase):
             self._resolution_config = ResolutionConfig(self._resolution)
         except Exception as e:
             logger.warning(f"分辨率配置初始化失败，使用默认配置: {e}")
-            self._resolution_config = ResolutionConfig("1080p")
+            self._resolution_config = ResolutionConfig("480p")
 
         if self._selected_servers:
             self._servers = self.mediaserver_helper.get_services(
@@ -261,6 +290,18 @@ class MediaCoverGenerator(_PluginBase):
         
         # 停止现有任务
         self.stop_service()
+
+        cleanup_triggered = False
+        if self._clean_images:
+            self.__clean_generated_images()
+            self._clean_images = False
+            cleanup_triggered = True
+        if self._clean_fonts:
+            self.__clean_downloaded_fonts()
+            self._clean_fonts = False
+            cleanup_triggered = True
+        if cleanup_triggered:
+            self.__update_config()
 
         if self._update_now:
             self._scheduler = BackgroundScheduler(timezone=settings.TZ)
@@ -389,11 +430,159 @@ class MediaCoverGenerator(_PluginBase):
             "animated_2_departure_type": self._animated_2_departure_type,
             "bg_color_mode": self._bg_color_mode,
             "custom_bg_color": self._custom_bg_color,
+            "clean_images": self._clean_images,
+            "clean_fonts": self._clean_fonts,
+            "save_recent_covers": self._save_recent_covers,
+            "covers_history_limit_per_library": self._covers_history_limit_per_library,
+            "covers_page_history_limit": self._covers_page_history_limit,
+            "page_tab": self._page_tab,
             "style_naming_v2": True,
         })
 
     def get_state(self) -> bool:
         return self._enabled
+
+    def __font_search_dirs(self) -> List[Path]:
+        dirs: List[Path] = []
+        if self._font_path:
+            dirs.append(Path(self._font_path))
+        repo_font_dir = Path(__file__).resolve().parents[2] / "fonts"
+        dirs.append(repo_font_dir)
+        unique_dirs: List[Path] = []
+        seen = set()
+        for directory in dirs:
+            key = str(directory)
+            if key in seen:
+                continue
+            seen.add(key)
+            if directory.exists() and directory.is_dir():
+                unique_dirs.append(directory)
+        return unique_dirs
+
+    def __find_font_file(self, aliases: List[str], exts: List[str]) -> Optional[str]:
+        normalized_aliases = [item.lower() for item in aliases if item]
+        normalized_aliases_compact = [re.sub(r'[\s_\-]+', '', item) for item in normalized_aliases]
+        normalized_exts = [item.lower() for item in exts]
+        for directory in self.__font_search_dirs():
+            candidates = sorted(directory.iterdir(), key=lambda p: p.name.lower())
+            for font_file in candidates:
+                if not font_file.is_file():
+                    continue
+                suffix = font_file.suffix.lower()
+                if suffix not in normalized_exts:
+                    continue
+                stem = font_file.stem.lower()
+                name = font_file.name.lower()
+                stem_compact = re.sub(r'[\s_\-]+', '', stem)
+                name_compact = re.sub(r'[\s_\-]+', '', name)
+                if any(
+                    alias in stem or alias in name or compact in stem_compact or compact in name_compact
+                    for alias, compact in zip(normalized_aliases, normalized_aliases_compact)
+                ):
+                    return str(font_file)
+        return None
+
+    def __get_font_presets(self) -> Tuple[List[Dict[str, str]], List[Dict[str, str]], Dict[str, Optional[str]], Dict[str, Optional[str]]]:
+        zh_specs = [
+            {"title": "潮黑", "value": "chaohei", "aliases": ["chaohei", "wendao", "潮黑", "chao_hei"]},
+            {"title": "粗雅宋", "value": "yasong", "aliases": ["yasong", "粗雅宋", "multi_1_zh", "ya_song"]},
+        ]
+        en_specs = [
+            {"title": "EmblemaOne", "value": "EmblemaOne", "aliases": ["emblemaone", "emblema_one"]},
+            {"title": "Melete", "value": "Melete", "aliases": ["melete", "multi_1_en"]},
+            {"title": "Phosphate", "value": "Phosphate", "aliases": ["phosphate", "phosphat"]},
+            {"title": "JosefinSans", "value": "JosefinSans", "aliases": ["josefinsans", "josefin_sans"]},
+            {"title": "LilitaOne", "value": "LilitaOne", "aliases": ["lilitaone", "lilita_one"]},
+            {"title": "Monoton", "value": "Monoton", "aliases": ["monoton"]},
+            {"title": "Plaster", "value": "Plaster", "aliases": ["plaster"]},
+        ]
+        all_specs = []
+        seen_values = set()
+        for spec in zh_specs + en_specs:
+            if spec["value"] in seen_values:
+                continue
+            seen_values.add(spec["value"])
+            value_alias = spec["value"].lower()
+            compact_value_alias = re.sub(r'[\s_\-]+', '', value_alias)
+            if value_alias not in spec["aliases"]:
+                spec["aliases"].append(value_alias)
+            if compact_value_alias and compact_value_alias not in spec["aliases"]:
+                spec["aliases"].append(compact_value_alias)
+            title_alias = spec["title"].lower()
+            compact_title_alias = re.sub(r'[\s_\-]+', '', title_alias)
+            if title_alias not in spec["aliases"]:
+                spec["aliases"].append(title_alias)
+            if compact_title_alias and compact_title_alias not in spec["aliases"]:
+                spec["aliases"].append(compact_title_alias)
+            all_specs.append(spec)
+        zh_paths: Dict[str, Optional[str]] = {}
+        en_paths: Dict[str, Optional[str]] = {}
+        zh_items: List[Dict[str, str]] = []
+        en_items: List[Dict[str, str]] = []
+        zh_exts = [".ttf", ".otf", ".woff2", ".woff"]
+        en_exts = [".ttf", ".otf", ".woff2", ".woff"]
+
+        for spec in all_specs:
+            found = self.__find_font_file(spec["aliases"], zh_exts)
+            zh_paths[spec["value"]] = found
+            zh_items.append({"title": spec["title"], "value": spec["value"]})
+        for spec in all_specs:
+            found = self.__find_font_file(spec["aliases"], en_exts)
+            en_paths[spec["value"]] = found
+            en_items.append({"title": spec["title"], "value": spec["value"]})
+        return zh_items, en_items, zh_paths, en_paths
+
+    def __clean_generated_images(self):
+        removed = 0
+        cache_dirs: List[Path] = []
+        if self._covers_path:
+            cache_dirs.append(Path(self._covers_path))
+        data_path = self.get_data_path()
+        legacy_covers_dir = data_path / "covers"
+        cache_dirs.append(legacy_covers_dir)
+
+        handled = set()
+        for cache_dir in cache_dirs:
+            if not cache_dir.exists() or not cache_dir.is_dir():
+                continue
+            cache_key = str(cache_dir.resolve())
+            if cache_key in handled:
+                continue
+            handled.add(cache_key)
+            for entry in cache_dir.iterdir():
+                if not entry.exists():
+                    continue
+                try:
+                    if entry.is_dir():
+                        shutil.rmtree(entry)
+                        removed += 1
+                    elif entry.is_file():
+                        entry.unlink(missing_ok=True)
+                        removed += 1
+                except Exception as e:
+                    logger.warning(f"清理图片失败 {entry}: {e}")
+        logger.info(f"清理图片完成（含旧版 covers 兼容目录），共清理 {removed} 项")
+
+    def __clean_downloaded_fonts(self):
+        if not self._font_path or not Path(self._font_path).exists():
+            logger.info("清理字体：未找到字体目录，跳过")
+            return
+        removed = 0
+        for entry in Path(self._font_path).iterdir():
+            if entry.name.startswith("."):
+                continue
+            try:
+                if entry.is_file():
+                    entry.unlink(missing_ok=True)
+                    removed += 1
+                elif entry.is_dir():
+                    shutil.rmtree(entry)
+                    removed += 1
+            except Exception as e:
+                logger.warning(f"清理字体失败 {entry}: {e}")
+        self._zh_font_path = ""
+        self._en_font_path = ""
+        logger.info(f"清理字体完成，共清理 {removed} 项")
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -417,7 +606,268 @@ class MediaCoverGenerator(_PluginBase):
             "summary": "API说明"
         }]
         """
-        pass
+        return [
+            {
+                "path": "/clean_images",
+                "endpoint": self.api_clean_images,
+                "auth": "bear",
+                "methods": ["POST"],
+                "summary": "立即清理封面图片缓存",
+            },
+            {
+                "path": "clean_images",
+                "endpoint": self.api_clean_images,
+                "auth": "bear",
+                "methods": ["POST"],
+                "summary": "立即清理封面图片缓存(兼容无前导斜杠)",
+            },
+            {
+                "path": "/clean_fonts",
+                "endpoint": self.api_clean_fonts,
+                "auth": "bear",
+                "methods": ["POST"],
+                "summary": "立即清理字体缓存",
+            },
+            {
+                "path": "clean_fonts",
+                "endpoint": self.api_clean_fonts,
+                "auth": "bear",
+                "methods": ["POST"],
+                "summary": "立即清理字体缓存(兼容无前导斜杠)",
+            },
+            {
+                "path": "/delete_saved_cover",
+                "endpoint": self.api_delete_saved_cover,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "删除一张已保存封面",
+            },
+            {
+                "path": "delete_saved_cover",
+                "endpoint": self.api_delete_saved_cover,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "删除一张已保存封面(兼容无前导斜杠)",
+            },
+            {
+                "path": "/generate_now",
+                "endpoint": self.api_generate_now,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "立即生成媒体库封面",
+            },
+            {
+                "path": "generate_now",
+                "endpoint": self.api_generate_now,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "立即生成媒体库封面(兼容无前导斜杠)",
+            },
+            {
+                "path": "/set_cover_style",
+                "endpoint": self.api_set_cover_style,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "保存封面风格选择",
+            },
+            {
+                "path": "set_cover_style",
+                "endpoint": self.api_set_cover_style,
+                "auth": "bear",
+                "methods": ["POST", "GET"],
+                "summary": "保存封面风格选择(兼容无前导斜杠)",
+            },
+            {"path": "/toggle_style_variant", "endpoint": self.api_toggle_style_variant, "auth": "bear", "methods": ["POST"], "summary": "切换静态/动态"},
+            {"path": "toggle_style_variant", "endpoint": self.api_toggle_style_variant, "auth": "bear", "methods": ["POST"], "summary": "切换静态/动态(兼容)"},
+            {"path": "/select_style_1", "endpoint": self.api_select_style_1, "auth": "bear", "methods": ["POST"], "summary": "选择风格1"},
+            {"path": "/select_style_2", "endpoint": self.api_select_style_2, "auth": "bear", "methods": ["POST"], "summary": "选择风格2"},
+            {"path": "/select_style_3", "endpoint": self.api_select_style_3, "auth": "bear", "methods": ["POST"], "summary": "选择风格3"},
+            {"path": "/select_style_4", "endpoint": self.api_select_style_4, "auth": "bear", "methods": ["POST"], "summary": "选择风格4"},
+            {"path": "select_style_1", "endpoint": self.api_select_style_1, "auth": "bear", "methods": ["POST"], "summary": "选择风格1(兼容)"},
+            {"path": "select_style_2", "endpoint": self.api_select_style_2, "auth": "bear", "methods": ["POST"], "summary": "选择风格2(兼容)"},
+            {"path": "select_style_3", "endpoint": self.api_select_style_3, "auth": "bear", "methods": ["POST"], "summary": "选择风格3(兼容)"},
+            {"path": "select_style_4", "endpoint": self.api_select_style_4, "auth": "bear", "methods": ["POST"], "summary": "选择风格4(兼容)"},
+            {"path": "/set_page_tab_generate", "endpoint": self.api_set_page_tab_generate, "auth": "bear", "methods": ["POST"], "summary": "切换到生成页"},
+            {"path": "/set_page_tab_history", "endpoint": self.api_set_page_tab_history, "auth": "bear", "methods": ["POST"], "summary": "切换到历史页"},
+            {"path": "/set_page_tab_clean", "endpoint": self.api_set_page_tab_clean, "auth": "bear", "methods": ["POST"], "summary": "切换到清理页"},
+            {"path": "set_page_tab_generate", "endpoint": self.api_set_page_tab_generate, "auth": "bear", "methods": ["POST"], "summary": "切换到生成页(兼容)"},
+            {"path": "set_page_tab_history", "endpoint": self.api_set_page_tab_history, "auth": "bear", "methods": ["POST"], "summary": "切换到历史页(兼容)"},
+            {"path": "set_page_tab_clean", "endpoint": self.api_set_page_tab_clean, "auth": "bear", "methods": ["POST"], "summary": "切换到清理页(兼容)"},
+            {"path": "/saved_cover_image", "endpoint": self.api_saved_cover_image, "methods": ["GET"], "summary": "获取已保存封面图片"},
+            {"path": "saved_cover_image", "endpoint": self.api_saved_cover_image, "methods": ["GET"], "summary": "获取已保存封面图片(兼容)"},
+        ]
+
+    def api_clean_images(self):
+        try:
+            logger.info("【MediaCoverGenerator】收到立即清理图片缓存请求")
+            self.__clean_generated_images()
+            self._clean_images = False
+            self.__update_config()
+            return {"code": 0, "msg": "图片缓存清理完成"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】立即清理图片失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"图片缓存清理失败: {e}"}
+
+    def api_clean_fonts(self):
+        try:
+            logger.info("【MediaCoverGenerator】收到立即清理字体缓存请求")
+            self.__clean_downloaded_fonts()
+            self._clean_fonts = False
+            self.__update_config()
+            return {"code": 0, "msg": "字体缓存清理完成"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】立即清理字体失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"字体缓存清理失败: {e}"}
+
+    def api_delete_saved_cover(self, file: str = ""):
+        try:
+            target_file = self.__resolve_saved_cover_path(file)
+            if not target_file:
+                return {"code": 1, "msg": "无效文件路径"}
+            if not target_file.exists() or not target_file.is_file():
+                return {"code": 1, "msg": "文件不存在"}
+            target_file.unlink(missing_ok=True)
+            logger.info(f"【MediaCoverGenerator】已删除封面文件: {target_file}")
+            return {"code": 0, "msg": "封面文件删除成功"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】删除封面文件失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"封面文件删除失败: {e}"}
+
+    def api_generate_now(self, style: str = ""):
+        old_style = self._cover_style
+        try:
+            if not self._enabled:
+                logger.warning("【MediaCoverGenerator】立即生成失败：插件未启用，请先在设置页启用插件并保存")
+                return {"code": 1, "msg": "插件未启用，请先在设置页启用插件并保存"}
+            if not self._selected_servers:
+                logger.warning("【MediaCoverGenerator】立即生成失败：未勾选媒体服务器，请先在设置页勾选服务器并保存")
+                return {"code": 1, "msg": "未勾选媒体服务器，请先在设置页勾选服务器并保存"}
+            if not self._servers:
+                logger.warning("【MediaCoverGenerator】立即生成失败：服务器连接信息为空，请检查设置并保存后重试")
+                return {"code": 1, "msg": "服务器连接信息为空，请检查设置并保存后重试"}
+
+            target_style = (style or "").strip()
+            allowed_styles = {
+                "static_1", "static_2", "static_3", "static_4",
+                "animated_1", "animated_2", "animated_3", "animated_4",
+            }
+            if target_style:
+                if target_style not in allowed_styles:
+                    return {"code": 1, "msg": f"不支持的风格: {target_style}"}
+                self._cover_style = target_style
+            logger.info(f"【MediaCoverGenerator】收到立即生成请求，风格: {self._cover_style}")
+            tips = self.__update_all_libraries()
+            return {"code": 0, "msg": tips or "封面生成任务已完成"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】立即生成失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"封面生成失败: {e}"}
+        finally:
+            self._cover_style = old_style
+
+    def api_set_cover_style(self, style: str = ""):
+        try:
+            target_style = (style or "").strip()
+            allowed_styles = {
+                "static_1", "static_2", "static_3", "static_4",
+                "animated_1", "animated_2", "animated_3", "animated_4",
+            }
+            if target_style not in allowed_styles:
+                return {"code": 1, "msg": f"不支持的风格: {target_style}"}
+            self._cover_style = target_style
+            base, variant = self.__resolve_cover_style_ui(target_style)
+            self._cover_style_base = base
+            self._cover_style_variant = variant
+            self.__update_config()
+            logger.info(f"【MediaCoverGenerator】已保存封面风格: {target_style}")
+            return {"code": 0, "msg": f"已保存风格: {target_style}"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】保存封面风格失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"保存风格失败: {e}"}
+
+    def __get_cover_style_parts(self) -> Tuple[str, int]:
+        style = (self._cover_style or "static_1").strip()
+        variant = "animated" if style.startswith("animated_") else "static"
+        try:
+            index = int(style.split("_")[-1])
+        except Exception:
+            index = 1
+        index = max(1, min(4, index))
+        return variant, index
+
+    def __set_cover_style_parts(self, variant: str, index: int):
+        safe_variant = "animated" if variant == "animated" else "static"
+        safe_index = max(1, min(4, int(index)))
+        target_style = f"{safe_variant}_{safe_index}"
+        self._cover_style = target_style
+        self._cover_style_base = f"static_{safe_index}"
+        self._cover_style_variant = safe_variant
+        self.__update_config()
+        logger.info(f"【MediaCoverGenerator】已保存封面风格: {target_style}")
+
+    def api_toggle_style_variant(self):
+        try:
+            variant, index = self.__get_cover_style_parts()
+            new_variant = "animated" if variant == "static" else "static"
+            self.__set_cover_style_parts(new_variant, index)
+            return {"code": 0, "msg": f"已切换为{new_variant}风格{index}"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】切换静态/动态失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"切换失败: {e}"}
+
+    def __api_select_style(self, index: int):
+        try:
+            variant, _ = self.__get_cover_style_parts()
+            self.__set_cover_style_parts(variant, index)
+            return {"code": 0, "msg": f"已选择{variant}风格{index}"}
+        except Exception as e:
+            logger.error(f"【MediaCoverGenerator】选择风格失败: {e}", exc_info=True)
+            return {"code": 1, "msg": f"选择风格失败: {e}"}
+
+    def api_select_style_1(self):
+        return self.__api_select_style(1)
+
+    def api_select_style_2(self):
+        return self.__api_select_style(2)
+
+    def api_select_style_3(self):
+        return self.__api_select_style(3)
+
+    def api_select_style_4(self):
+        return self.__api_select_style(4)
+
+    def __set_page_tab(self, tab: str):
+        self._page_tab = tab if tab in ["generate-tab", "history-tab", "clean-tab"] else "generate-tab"
+        logger.info(f"【MediaCoverGenerator】已切换页面Tab: {self._page_tab}")
+
+    def api_set_page_tab_generate(self):
+        self.__set_page_tab("generate-tab")
+        return {"code": 0, "msg": "已切换到封面生成"}
+
+    def api_set_page_tab_history(self):
+        self.__set_page_tab("history-tab")
+        return {"code": 0, "msg": "已切换到历史封面"}
+
+    def api_set_page_tab_clean(self):
+        self.__set_page_tab("clean-tab")
+        return {"code": 0, "msg": "已切换到清理缓存"}
+
+    def api_saved_cover_image(self, file: str = ""):
+        target_file = self.__resolve_saved_cover_path(file)
+        if not target_file or not target_file.exists() or not target_file.is_file():
+            return {"code": 1, "msg": "图片不存在"}
+        mime_type, _ = mimetypes.guess_type(str(target_file))
+        if not mime_type:
+            mime_type = "image/jpeg"
+        try:
+            from fastapi.responses import FileResponse
+            return FileResponse(path=str(target_file), media_type=mime_type)
+        except Exception:
+            try:
+                from starlette.responses import FileResponse
+                return FileResponse(path=str(target_file), media_type=mime_type)
+            except Exception as e:
+                logger.error(f"【MediaCoverGenerator】返回图片失败: {e}")
+                return {"code": 1, "msg": "返回图片失败"}
 
     def get_service(self) -> List[Dict[str, Any]]:
         """
@@ -457,6 +907,7 @@ class MediaCoverGenerator(_PluginBase):
         """
         拼装插件配置页面
         """
+        zh_font_items, en_font_items, _, _ = self.__get_font_presets()
         # 标题配置
         title_tab = [
             {
@@ -477,8 +928,8 @@ class MediaCoverGenerator(_PluginBase):
                                     'style': 'height: 30rem',
                                     'label': '中英标题配置',
                                     'placeholder': '''媒体库名称:
-- 中文标题
-- 英文标题
+- 主标题
+- 副标题
 - "#FF5722"  # 可选：背景颜色（必须加引号）'''
                                  }
                              }
@@ -514,7 +965,7 @@ class MediaCoverGenerator(_PluginBase):
                         'component': 'VCol',
                         'props': {
                             'cols': 12,
-                            'md': 6
+                            'md': 4
                         },
                         'content': [
                             {
@@ -523,7 +974,45 @@ class MediaCoverGenerator(_PluginBase):
                                     'model': 'covers_input',
                                     'label': '自定义图片目录（可选）',
                                     'prependInnerIcon': 'mdi-file-image',
-                                    'hint': '使用目录内图片生成封面',
+                                    'hint': '使用你指定的图片生成封面，图片放在与媒体库同名的文件夹下',
+                                    'persistentHint': True
+                                }
+                            }
+                        ]
+                    },
+
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 4
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': 'covers_output',
+                                    'label': '历史封面保存目录（可选）',
+                                    'prependInnerIcon': 'mdi-file-image',
+                                    'hint': '生成的封面默认保存在本插件数据目录下',
+                                    'persistentHint': True
+                                }
+                            }
+                        ]
+                    },
+                                        {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 4
+                        },
+                        'content': [
+                            {
+                                'component': 'VSwitch',
+                                'props': {
+                                    'model': 'save_recent_covers',
+                                    'label': '保存最近生成的封面',
+                                    'hint': '默认开启，保存历史封面',
                                     'persistentHint': True
                                 }
                             }
@@ -533,18 +1022,37 @@ class MediaCoverGenerator(_PluginBase):
                         'component': 'VCol',
                         'props': {
                             'cols': 12,
-                            'md': 6
+                            'md': 4
                         },
                         'content': [
                             {
                                 'component': 'VTextField',
                                 'props': {
-                                    'model': 'covers_output',
-                                    'label': '封面另存目录（可选）',
-                                    'prependInnerIcon': 'mdi-file-image',
-                                    'hint': '生成的封面在此另存一份',
+                                    'model': 'covers_history_limit_per_library',
+                                    'label': '媒体库历史封面数量',
+                                    'prependInnerIcon': 'mdi-history',
+                                    'hint': '单个媒体库封面保留上限，默认 10',
                                     'persistentHint': True
                                 }
+                            }
+                        ]
+                    },
+                    {
+                        'component': 'VCol',
+                        'props': {
+                            'cols': 12,
+                            'md': 4
+                        },
+                        'content': [
+                            {
+                                'component': 'VTextField',
+                                'props': {
+                                    'model': 'covers_page_history_limit',
+                                    'label': '历史封面显示数量',
+                                    'prependInnerIcon': 'mdi-image-multiple-outline',
+                                    'hint': '历史封面「显示数量」，默认 50',
+                                    'persistentHint': True
+                                },
                             }
                         ]
                     }
@@ -588,10 +1096,7 @@ class MediaCoverGenerator(_PluginBase):
                                     'model': 'zh_font_preset',
                                     'label': '主标题字体预设',
                                     'prependInnerIcon': 'mdi-ideogram-cjk',
-                                    'items': [
-                                        {"title": "潮黑", "value": "chaohei"},
-                                        {"title": "粗雅宋", "value": "yasong"}
-                                    ]
+                                    'items': zh_font_items
                                 }
                             }
                         ]
@@ -611,13 +1116,7 @@ class MediaCoverGenerator(_PluginBase):
                                     'model': 'en_font_preset',
                                     'label': '副标题字体预设',
                                     'prependInnerIcon': 'mdi-format-font',
-                                    'items': [
-                                        {"title": "EmblemaOne", "value": "EmblemaOne"},
-                                        {"title": "Melete", "value": "Melete"},
-                                        {"title": "Monoton", "value": "Monoton"},
-                                        {"title": "Plaster", "value": "Plaster"},
-                                        {"title": "Phosphate", "value": "Phosphate"},
-                                    ]
+                                    'items': en_font_items
                                 }
                             }
                         ]
@@ -831,19 +1330,19 @@ class MediaCoverGenerator(_PluginBase):
         styles = [
             {
                 "value": "static_1",
-                "src": static_1
+                "src": self.__style_preview_src(1)
             },
             {
                 "value": "static_2",
-                "src": static_2
+                "src": self.__style_preview_src(2)
             },
             {
                 "value": "static_3",
-                "src": static_3
+                "src": self.__style_preview_src(3)
             },
             {
                 "value": "static_4",
-                "src": static_4
+                "src": self.__style_preview_src(4)
             }
         ]
 
@@ -909,7 +1408,7 @@ class MediaCoverGenerator(_PluginBase):
                                             'component': 'VRadio',
                                             'props': {
                                                 'value': style.get('value'),
-                                                'color': 'primary',
+                                                'color': '#FFFFFF',
                                                 'baseColor': '#FFFFFF',
                                                 'density': 'default',
                                                 'hideDetails': True,
@@ -1611,7 +2110,7 @@ class MediaCoverGenerator(_PluginBase):
                                             "color": "#f3afe4",
                                         },
                                     },
-                                    {"component": "span", "text": "更多参数（待测试）"},
+                                    {"component": "span", "text": "更多参数"},
                                 ],
                             },
                         ],
@@ -1650,7 +2149,7 @@ class MediaCoverGenerator(_PluginBase):
                 ],
             }
         ], {
-            "enabled": False,
+            "enabled": True,
             "update_now": False,
             "transfer_monitor": True,
             "cron": "",
@@ -1663,13 +2162,13 @@ class MediaCoverGenerator(_PluginBase):
 #
 # 格式1 - 两行配置（主标题+副标题）：
 # 媒体库名称:
-#   - 中文标题
-#   - 英文标题
+#   - 主标题
+#   - 副标题
 #
 # 格式2 - 三行配置（主标题+副标题+背景颜色）：
 # 媒体库名称:
-#   - 中文标题
-#   - 英文标题
+#   - 主标题
+#   - 副标题
 #   - "#FF5722"  # 背景颜色（可选，必须加引号）
 #
 ''',
@@ -1677,14 +2176,18 @@ class MediaCoverGenerator(_PluginBase):
             "cover_style": "static_1",
             "cover_style_base": "static_1",
             "cover_style_variant": "static",
-            "multi_1_blur": False,
+            "multi_1_blur": True,
+            "zh_font_preset": "chaohei",
+            "en_font_preset": "EmblemaOne",
+            "zh_font_custom": "",
+            "en_font_custom": "",
             "zh_font_size": None,
             "en_font_size": None,
             "blur_size": 50,
             "color_ratio": 0.8,
             "title_scale": 1.0,
             "use_primary": False,
-            "resolution": "1080p",
+            "resolution": "480p",
             "custom_width": 1920,
             "custom_height": 1080,
             "bg_color_mode": "auto",
@@ -1696,11 +2199,509 @@ class MediaCoverGenerator(_PluginBase):
             "animation_resolution": "320x180",
             "animation_reduce_colors": "medium",
             "animated_2_image_count": 6,
+            "animated_2_departure_type": "fly",
+            "clean_images": False,
+            "clean_fonts": False,
+            "save_recent_covers": True,
+            "covers_history_limit_per_library": 10,
+            "covers_page_history_limit": 50,
+            "page_tab": "generate-tab",
             "style_naming_v2": True,
         }
 
     def get_page(self) -> List[dict]:
-        pass
+        limit = self.__clamp_value(
+            self._covers_page_history_limit,
+            1,
+            500,
+            50,
+            "covers_page_history_limit[get_page]",
+            int,
+        )
+        style_variant, style_index = self.__get_cover_style_parts()
+        style_preview_cards = self.__build_page_style_cards(style_variant=style_variant, selected_index=style_index)
+        setup_warnings: List[str] = []
+        if not self._enabled:
+            setup_warnings.append("插件未启用，请先在设置页启用插件并保存。")
+        if not self._selected_servers:
+            setup_warnings.append("未勾选媒体服务器，请先在设置页勾选服务器并保存。")
+        elif not self._servers:
+            setup_warnings.append("服务器配置尚未生效，请在设置页保存后重试。")
+
+        cover_rows = []
+        recent_covers = self.__get_recent_generated_covers(limit=limit)
+        if recent_covers:
+            for item in recent_covers:
+                delete_api = f"plugin/MediaCoverGenerator/delete_saved_cover?file={quote(item['path'])}"
+                cover_rows.append(
+                    {
+                        "component": "VCol",
+                        "props": {"cols": 12, "sm": 6, "md": 3},
+                        "content": [
+                            {
+                                "component": "VCard",
+                                "props": {
+                                    "variant": "flat",
+                                    "elevation": 2,
+                                    "class": "rounded-lg",
+                                },
+                                "content": [
+                                    {
+                                        "component": "VImg",
+                                        "props": {
+                                            "src": item["src"],
+                                            "aspect-ratio": "16/9",
+                                            "cover": True,
+                                        },
+                                    },
+                                    {
+                                        "component": "VCardText",
+                                        "props": {"class": "py-2"},
+                                        "content": [
+                                            {
+                                                "component": "VRow",
+                                                "props": {"class": "align-center", "noGutters": True},
+                                                "content": [
+                                                    {
+                                                        "component": "VCol",
+                                                        "props": {"cols": 9},
+                                                        "content": [
+                                                            {
+                                                                "component": "div",
+                                                                "props": {
+                                                                    "class": "text-body-2",
+                                                                    "style": "display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2rem; min-height: 2.4rem;"
+                                                                },
+                                                                "text": item["name"],
+                                                            },
+                                                            {
+                                                                "component": "div",
+                                                                "props": {"class": "text-caption text-medium-emphasis mt-1"},
+                                                                "text": item["size"],
+                                                            },
+                                                        ],
+                                                    },
+                                                    {
+                                                        "component": "VCol",
+                                                        "props": {"cols": 3, "class": "text-right"},
+                                                        "content": [
+                                                            {
+                                                                "component": "VBtn",
+                                                                "props": {
+                                                                    "color": "error",
+                                                                    "variant": "text",
+                                                                    "size": "small",
+                                                                    "title": "删除",
+                                                                    "class": "text-none",
+                                                                },
+                                                                "text": "删除",
+                                                                "events": {
+                                                                    "click": {
+                                                                        "api": delete_api,
+                                                                        "method": "post",
+                                                                    }
+                                                                },
+                                                            }
+                                                        ],
+                                                    },
+                                                ],
+                                            }
+                                        ],
+                                    },
+                                ],
+                            }
+                        ],
+                    }
+                )
+        else:
+            cover_rows.append(
+                {
+                    "component": "VAlert",
+                    "props": {
+                        "type": "info",
+                        "variant": "tonal",
+                        "density": "compact",
+                    },
+                    "text": "未发现最近生成的封面文件。请先执行一次封面生成，或检查“封面另存目录”是否已配置。",
+                }
+            )
+
+        page_tab = self._page_tab if self._page_tab in ["generate-tab", "history-tab", "clean-tab"] else "generate-tab"
+        return [
+            {
+                "component": "VCard",
+                "content": [
+                    {
+                        "component": "VTabs",
+                        "props": {"grow": True, "modelValue": page_tab},
+                        "content": [
+                            {
+                                "component": "VTab",
+                                "props": {"value": "generate-tab"},
+                                "text": "封面生成",
+                                "events": {"click": {"api": "plugin/MediaCoverGenerator/set_page_tab_generate", "method": "post"}},
+                            },
+                            {
+                                "component": "VTab",
+                                "props": {"value": "history-tab"},
+                                "text": "历史封面",
+                                "events": {"click": {"api": "plugin/MediaCoverGenerator/set_page_tab_history", "method": "post"}},
+                            },
+                            {
+                                "component": "VTab",
+                                "props": {"value": "clean-tab"},
+                                "text": "清理缓存",
+                                "events": {"click": {"api": "plugin/MediaCoverGenerator/set_page_tab_clean", "method": "post"}},
+                            },
+                        ],
+                    },
+                    {"component": "VDivider"},
+                ],
+            },
+        ] + (
+            [
+                {
+                    "component": "VCard",
+                    "props": {"variant": "outlined", "class": "mt-3"},
+                    "content": [
+                                    {
+                                        "component": "VCardText",
+                                        "content": [
+                                            {
+                                                "component": "VAlert",
+                                                "props": {
+                                                    "type": "warning",
+                                                    "variant": "tonal",
+                                                    "density": "compact",
+                                                    "class": "mb-3",
+                                                },
+                                                "text": "首次运行请先完成设置",
+                                            },
+                                            {
+                                                "component": "div",
+                                                "props": {"class": "text-caption text-medium-emphasis mb-2"},
+                                                "text": "；".join(setup_warnings),
+                                            },
+                                            {
+                                                "component": "VRow",
+                                                "content": [
+                                                    {
+                                                        "component": "VCol",
+                                            "props": {"cols": 12, "md": 9},
+                                            "content": [
+                                                            {
+                                                                "component": "VBtn",
+                                                                "props": {
+                                                                    "variant": "flat",
+                                                                    "color": "primary",
+                                                                    "class": "text-none mr-2 mb-2",
+                                                                    "prepend-icon": "mdi-swap-horizontal",
+                                                                },
+                                                    "text": f"切换到{'动态' if style_variant == 'static' else '静态'}",
+                                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/toggle_style_variant", "method": "post"}},
+                                                },
+                                                            {
+                                                                "component": "VBtn",
+                                                                "props": {
+                                                                    "variant": "flat",
+                                                                    "color": "primary",
+                                                                    "class": "text-none mb-2",
+                                                                    "prepend-icon": "mdi-play-circle-outline",
+                                                                },
+                                                    "text": "立即生成当前风格",
+                                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/generate_now", "method": "post"}},
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption text-medium-emphasis ml-2 mb-2 d-inline-block"},
+                                                    "text": "更多参数请点击右下角齿轮设置",
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "component": "VRow",
+                                    "content": style_preview_cards,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ] if page_tab == "generate-tab" and setup_warnings else
+            [
+                {
+                    "component": "VCard",
+                    "props": {"variant": "outlined", "class": "mt-3"},
+                    "content": [
+                                    {
+                                        "component": "VCardText",
+                                        "content": [
+                                            {
+                                                "component": "VRow",
+                                                "content": [
+                                                    {
+                                                        "component": "VCol",
+                                            "props": {"cols": 12, "md": 9},
+                                            "content": [
+                                                            {
+                                                                "component": "VBtn",
+                                                                "props": {
+                                                                    "variant": "flat",
+                                                                    "color": "primary",
+                                                                    "class": "text-none mr-2 mb-2",
+                                                                    "prepend-icon": "mdi-swap-horizontal",
+                                                                },
+                                                    "text": f"切换到{'动态' if style_variant == 'static' else '静态'}",
+                                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/toggle_style_variant", "method": "post"}},
+                                                },
+                                                            {
+                                                                "component": "VBtn",
+                                                                "props": {
+                                                                    "variant": "flat",
+                                                                    "color": "primary",
+                                                                    "class": "text-none mb-2",
+                                                                    "prepend-icon": "mdi-play-circle-outline",
+                                                                },
+                                                    "text": "立即生成当前风格",
+                                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/generate_now", "method": "post"}},
+                                                },
+                                                {
+                                                    "component": "div",
+                                                    "props": {"class": "text-caption text-medium-emphasis ml-2 mb-2 d-inline-block"},
+                                                    "text": "首次运行请先勾选服务器并保存",
+                                                },
+                                            ],
+                                        }
+                                    ],
+                                },
+                                {
+                                    "component": "VRow",
+                                    "content": style_preview_cards,
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ] if page_tab == "generate-tab" else
+            [
+                {
+                    "component": "VCard",
+                    "props": {"variant": "outlined", "class": "mt-3"},
+                    "content": [
+                        {"component": "VCardTitle", "text": f"最近生成的封面（最多 {limit} 条）"},
+                        {"component": "VCardText", "content": [{"component": "VRow", "content": cover_rows}]},
+                    ],
+                }
+            ] if page_tab == "history-tab" else
+            [
+                {
+                    "component": "VCard",
+                    "props": {"variant": "outlined", "class": "mt-3"},
+                    "content": [
+                        {
+                            "component": "VCardText",
+                            "props": {"class": "pa-6 d-flex flex-column align-center"},
+                            "content": [
+                                            {
+                                                "component": "VBtn",
+                                                "props": {
+                                                    "color": "error",
+                                                    "variant": "flat",
+                                                    "size": "large",
+                                                    "prepend-icon": "mdi-image-remove",
+                                                    "class": "mb-3 text-none",
+                                                },
+                                    "text": "立即清理图片缓存",
+                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/clean_images", "method": "post"}},
+                                },
+                                            {
+                                                "component": "VBtn",
+                                                "props": {
+                                                    "color": "error",
+                                                    "variant": "flat",
+                                                    "size": "large",
+                                                    "prepend-icon": "mdi-format-font",
+                                                    "class": "mb-3 text-none",
+                                                },
+                                    "text": "立即清理字体缓存",
+                                    "events": {"click": {"api": "plugin/MediaCoverGenerator/clean_fonts", "method": "post"}},
+                                },
+                                {
+                                    "component": "div",
+                                    "props": {"class": "text-caption text-medium-emphasis"},
+                                    "text": "点击后立即执行，无需保存配置。",
+                                },
+                            ],
+                        }
+                    ],
+                }
+            ]
+        )
+    def __build_page_style_cards(self, style_variant: str, selected_index: int) -> List[Dict[str, Any]]:
+        styles = [
+            {"name": "风格1", "index": 1, "src": self.__style_preview_src(1)},
+            {"name": "风格2", "index": 2, "src": self.__style_preview_src(2)},
+            {"name": "风格3", "index": 3, "src": self.__style_preview_src(3)},
+            {"name": "风格4", "index": 4, "src": self.__style_preview_src(4)},
+        ]
+        cards: List[Dict[str, Any]] = []
+        for style in styles:
+            cards.append(
+                {
+                    "component": "VCol",
+                    "props": {"cols": 12, "sm": 6, "md": 3},
+                    "content": [
+                        {
+                            "component": "VCard",
+                            "props": {
+                                "variant": "flat",
+                                "elevation": 3 if style["index"] == selected_index else 1,
+                                "color": "primary" if style["index"] == selected_index else None,
+                                "class": "cursor-pointer",
+                            },
+                            "events": {
+                                "click": {
+                                    "api": f"plugin/MediaCoverGenerator/select_style_{style['index']}",
+                                    "method": "post",
+                                }
+                            },
+                            "content": [
+                                {
+                                    "component": "VImg",
+                                    "props": {
+                                        "src": style["src"],
+                                        "aspect-ratio": "16/9",
+                                        "cover": True,
+                                    },
+                                },
+                                {
+                                    "component": "VCardText",
+                                    "props": {"class": "py-2 text-center"},
+                                    "text": f"{style['name']}（{'静态' if style_variant == 'static' else '动态'}{style['index']}）" if style["index"] == selected_index else style["name"],
+                                },
+                            ],
+                        }
+                    ],
+                }
+            )
+        return cards
+
+    @staticmethod
+    def __style_preview_src(index: int) -> str:
+        safe_index = max(1, min(4, int(index)))
+        return f"https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/images/style_{safe_index}.jpeg"
+
+    def __get_recent_generated_covers(self, limit: int = 20) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        cover_dirs: List[Path] = []
+
+        if self._covers_output:
+            cover_dirs.append(Path(self._covers_output))
+        data_path = self.get_data_path()
+        default_output = data_path / "output"
+        if default_output.exists():
+            cover_dirs.append(default_output)
+
+        allowed_ext = {".jpg", ".jpeg", ".png", ".gif", ".apng", ".webp"}
+        seen = set()
+        for directory in cover_dirs:
+            key = str(directory)
+            if key in seen:
+                continue
+            seen.add(key)
+            if not directory.exists() or not directory.is_dir():
+                continue
+            for file_path in directory.iterdir():
+                if not file_path.is_file():
+                    continue
+                if file_path.suffix.lower() not in allowed_ext:
+                    continue
+                try:
+                    stat = file_path.stat()
+                    mime_type = "image/jpeg"
+                    if file_path.suffix.lower() == ".png":
+                        mime_type = "image/png"
+                    elif file_path.suffix.lower() == ".gif":
+                        mime_type = "image/gif"
+                    elif file_path.suffix.lower() == ".webp":
+                        mime_type = "image/webp"
+                    elif file_path.suffix.lower() == ".apng":
+                        mime_type = "image/apng"
+
+                    with open(file_path, "rb") as image_file:
+                        image_b64 = base64.b64encode(image_file.read()).decode("utf-8")
+
+                    image_src = f"data:{mime_type};base64,{image_b64}"
+
+                    items.append(
+                        {
+                            "name": file_path.name,
+                            "path": str(file_path),
+                            "mtime_ts": float(stat.st_mtime),
+                            "mtime": datetime.datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                            "size": self.__format_size(stat.st_size),
+                            "src": image_src,
+                        }
+                    )
+                except Exception as e:
+                    logger.debug(f"读取封面文件信息失败: {file_path} -> {e}")
+
+        items.sort(key=lambda x: x.get("mtime_ts", 0.0), reverse=True)
+        return items[:max(1, int(limit))]
+
+    @staticmethod
+    def __format_size(size_bytes: int) -> str:
+        try:
+            size = float(size_bytes)
+        except (TypeError, ValueError):
+            return "0 B"
+        units = ["B", "KB", "MB", "GB"]
+        for unit in units:
+            if size < 1024 or unit == units[-1]:
+                return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} {unit}"
+            size /= 1024
+        return f"{int(size_bytes)} B"
+
+    def __get_saved_cover_dirs(self) -> List[Path]:
+        result: List[Path] = []
+        if self._covers_output:
+            result.append(Path(self._covers_output))
+        data_path = self.get_data_path()
+        default_output = data_path / "output"
+        result.append(default_output)
+        unique: List[Path] = []
+        seen = set()
+        for directory in result:
+            key = str(directory)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(directory)
+        return unique
+
+    def __resolve_saved_cover_path(self, raw_path: str) -> Optional[Path]:
+        if not raw_path:
+            return None
+        decoded = unquote(str(raw_path)).strip()
+        target = Path(decoded).expanduser()
+        if not target.is_absolute():
+            return None
+        allowed_dirs = self.__get_saved_cover_dirs()
+        for directory in allowed_dirs:
+            try:
+                root = directory.resolve()
+                file_path = target.resolve()
+                if str(file_path).startswith(str(root) + os.sep) or file_path == root:
+                    return file_path
+            except Exception:
+                continue
+        return None
+
+    def __get_recent_cover_output_dir(self) -> Path:
+        if self._covers_output:
+            return Path(self._covers_output).expanduser()
+        return self.get_data_path() / "output"
 
     @eventmanager.register(EventType.PluginAction)
     def update_covers(self, event: Event):
@@ -1863,7 +2864,7 @@ class MediaCoverGenerator(_PluginBase):
                 "animated_2": "帷幕切换动画",
                 "animated_3": "斜向滚动动画",
                 "animated_4": "全屏模糊渐变"
-            }[self._cover_style]
+            }.get(self._cover_style, "静态 1")
             logger.info(f"当前风格 {cover_style}")
             # 获取媒体库列表
             libraries = self.__get_server_libraries(service)
@@ -1993,11 +2994,11 @@ class MediaCoverGenerator(_PluginBase):
 
         # 验证字体文件是否存在
         if not validate_font_file(Path(self._zh_font_path)):
-            logger.error(f"中文字体文件无效: {self._zh_font_path}")
+            logger.error(f"主标题字体文件无效: {self._zh_font_path}")
             return False
 
         if not validate_font_file(Path(self._en_font_path)):
-            logger.error(f"英文字体文件无效: {self._en_font_path}")
+            logger.error(f"副标题字体文件无效: {self._en_font_path}")
             return False
 
         font_path = (str(self._zh_font_path), str(self._en_font_path))
@@ -2218,7 +3219,7 @@ class MediaCoverGenerator(_PluginBase):
                     "PremiereDate": "Movie,Series",
                     "DateCreated": "Movie,Episode",
                     "Random": "Movie,Series"
-                }[self._sort_by]
+                }.get(self._sort_by, "Movie,Series")
             else:
                 # 对于多图样式，始终包含 Series 而非 Episode 以获取海报
                 include_types = "Movie,Series"
@@ -2539,7 +3540,7 @@ class MediaCoverGenerator(_PluginBase):
     
     def __load_title_config(self, yaml_str: str) -> dict:
         try:
-            # 替换中文全角冒号为英文半角
+            # 替换全角冒号为半角
             yaml_str = yaml_str.replace("：", ":")
             # 替换制表符为两个空格，统一缩进
             yaml_str = yaml_str.replace("\t", "  ")
@@ -2605,7 +3606,7 @@ class MediaCoverGenerator(_PluginBase):
 
     def __get_title_from_config(self, library_name):
         """
-        从 yaml 配置中获取媒体库的中英文标题和背景颜色
+        从 yaml 配置中获取媒体库的主副标题和背景颜色
         """
         zh_title = library_name
         en_title = ''
@@ -2911,23 +3912,60 @@ class MediaCoverGenerator(_PluginBase):
             return None
 
 
-    def __save_image_to_local(self, image_content, filename):
+    def __save_image_to_local(self, image_content, server_name: str, library_name: str, extension: str):
         """
         保存图片到本地路径
         """
         try:
+            if not self._save_recent_covers:
+                return
             # 确保目录存在
-            local_path = self._covers_output
-            import os
+            local_path = str(self.__get_recent_cover_output_dir())
             os.makedirs(local_path, exist_ok=True)
-            
-            # 保存文件
+
+            safe_server = self.__sanitize_filename(server_name) or "server"
+            safe_library = self.__sanitize_filename(library_name) or "library"
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            ext = extension.strip(".").lower() if extension else "jpg"
+            filename = f"{safe_server}_{safe_library}_{timestamp}.{ext}"
+
             file_path = os.path.join(local_path, filename)
             with open(file_path, "wb") as f:
                 f.write(image_content)
             logger.info(f"图片已保存到本地: {file_path}")
+            self.__trim_saved_cover_history(local_path, safe_server, safe_library)
         except Exception as err:
             logger.error(f"保存图片到本地失败: {str(err)}")
+
+    def __trim_saved_cover_history(self, local_path: str, safe_server: str, safe_library: str):
+        limit = self.__clamp_value(
+            self._covers_history_limit_per_library,
+            1,
+            100,
+            10,
+            "covers_history_limit_per_library[trim]",
+            int,
+        )
+        pattern = f"{safe_server}_{safe_library}_"
+        candidate_files: List[Path] = []
+        try:
+            for file_name in os.listdir(local_path):
+                lower_name = file_name.lower()
+                if not lower_name.endswith((".jpg", ".jpeg", ".png", ".gif", ".webp", ".apng")):
+                    continue
+                if not file_name.startswith(pattern):
+                    continue
+                file_path = Path(local_path) / file_name
+                if file_path.is_file():
+                    candidate_files.append(file_path)
+            if len(candidate_files) <= limit:
+                return
+            candidate_files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            for old_file in candidate_files[limit:]:
+                old_file.unlink(missing_ok=True)
+                logger.info(f"已按历史数量限制删除旧封面: {old_file}")
+        except Exception as e:
+            logger.warning(f"清理历史封面失败: {e}")
         
 
     def __set_library_image(self, service, library, image_base64):
@@ -2960,10 +3998,10 @@ class MediaCoverGenerator(_PluginBase):
                 extension = "jpg"
 
             # 在发送前保存一份图片到本地
-            if self._covers_output:
+            if self._save_recent_covers:
                 try:
                     image_bytes = base64.b64decode(image_base64)
-                    self.__save_image_to_local(image_bytes, f"{library['Name']}.{extension}")
+                    self.__save_image_to_local(image_bytes, service.name, library['Name'], extension)
                 except Exception as save_err:
                     logger.error(f"保存发送前图片失败: {str(save_err)}")
             
@@ -3175,48 +4213,56 @@ class MediaCoverGenerator(_PluginBase):
 
             # 判断是否像路径（包含 / 或 \，或以 ~、.、/ 开头）
             if os.path.isabs(s) or s.startswith(('.', '~', '/')) or re.search(r'[\\/]', s):
-                exists = os.path.exists(os.path.expanduser(s))
                 return 'path'
 
             return None
         
         font_dir_path = self._font_path
+        Path(font_dir_path).mkdir(parents=True, exist_ok=True)
+
+        _, _, zh_preset_paths, en_preset_paths = self.__get_font_presets()
 
         if not self._zh_font_preset:
             self._zh_font_preset = "chaohei"
 
-        default_zh_url = {
-            "chaohei": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/wendao.ttf",
-            "yasong": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/multi_1_zh.ttf",
-
-        }[self._zh_font_preset]
+        default_font_url = {
+            "chaohei": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/chaohei.ttf",
+            "yasong": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/yasong.ttf",
+            "EmblemaOne": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/EmblemaOne.woff2",
+            "Melete": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/Melete.otf",
+            "Phosphate": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/phosphate.ttf",
+            "JosefinSans": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/josefinsans.woff2",
+            "LilitaOne": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/lilitaone.woff2",
+            "Monoton": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/Monoton.woff2",
+            "Plaster": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/Plaster.woff2",
+        }
+        default_zh_url = default_font_url.get(self._zh_font_preset, "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/chaohei.ttf")
 
         if not self._en_font_preset:
             self._en_font_preset = "EmblemaOne"
 
-        default_en_url = {
-            "EmblemaOne": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/EmblemaOne.woff2",
-            "Melete": "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/multi_1_en.otf",
-        }[self._en_font_preset]
+        default_en_url = default_font_url.get(self._en_font_preset, "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/fonts/EmblemaOne.woff2")
         
         log_prefix = "默认"
-        current_zh_font_url = self._zh_font_custom if detect_string_type(self._zh_font_custom) == 'url' else default_zh_url
-        current_en_font_url = self._en_font_custom if detect_string_type(self._en_font_custom) == 'url' else default_en_url
-        zh_local_path_config = self._zh_font_custom if detect_string_type(self._zh_font_custom) == 'path' else None
-        en_local_path_config = self._en_font_custom if detect_string_type(self._en_font_custom) == 'path' else None
-        
-        downloaded_zh_font_base = "zh"
-        downloaded_en_font_base = "en"
-        hash_zh_file_name = "zh_url.hash"
-        hash_en_file_name = "en_url.hash"
+        zh_custom_type = detect_string_type(self._zh_font_custom)
+        en_custom_type = detect_string_type(self._en_font_custom)
+        current_zh_font_url = self._zh_font_custom if zh_custom_type == 'url' else default_zh_url
+        current_en_font_url = self._en_font_custom if en_custom_type == 'url' else default_en_url
+        zh_local_path_config = self._zh_font_custom if zh_custom_type == 'path' else zh_preset_paths.get(self._zh_font_preset)
+        en_local_path_config = self._en_font_custom if en_custom_type == 'path' else en_preset_paths.get(self._en_font_preset)
+
+        downloaded_zh_font_base = f"{self._zh_font_preset}_custom" if zh_custom_type == 'url' else self._zh_font_preset
+        downloaded_en_font_base = f"{self._en_font_preset}_custom" if en_custom_type == 'url' else self._en_font_preset
+        hash_zh_file_name = f"{downloaded_zh_font_base}_url.hash"
+        hash_en_file_name = f"{downloaded_en_font_base}_url.hash"
         final_zh_font_path_attr = "_zh_font_path"
         final_en_font_path_attr = "_en_font_path"
 
-        logger.info(f"当前中文字体URL: {current_zh_font_url} (本地路径: {zh_local_path_config})")
+        logger.info(f"当前主标题字体URL: {current_zh_font_url} (本地路径: {zh_local_path_config})")
 
         active_fonts_to_process = [
             {
-                "lang": "中文",
+                "lang": "主标题",
                 "url": current_zh_font_url,
                 "local_path_config": zh_local_path_config,
                 "download_base_name": downloaded_zh_font_base,
@@ -3225,7 +4271,7 @@ class MediaCoverGenerator(_PluginBase):
                 "fallback_ext": ".ttf"
             },
             {
-                "lang": "英文",
+                "lang": "副标题",
                 "url": current_en_font_url,
                 "local_path_config": en_local_path_config,
                 "download_base_name": downloaded_en_font_base,
@@ -3367,11 +4413,11 @@ class MediaCoverGenerator(_PluginBase):
 
             # 验证字体文件有效性
             if self._zh_font_path and not validate_font_file(Path(self._zh_font_path)):
-                logger.warning("中文字体文件无效，尝试重新下载")
+                logger.warning("主标题字体文件无效，尝试重新下载")
                 return False
 
             if self._en_font_path and not validate_font_file(Path(self._en_font_path)):
-                logger.warning("英文字体文件无效，尝试重新下载")
+                logger.warning("副标题字体文件无效，尝试重新下载")
                 return False
 
             logger.info("插件健康检查通过")
