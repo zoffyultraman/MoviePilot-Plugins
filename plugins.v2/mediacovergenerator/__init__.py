@@ -54,7 +54,7 @@ class MediaCoverGenerator(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/icons/emby.png"
     # 插件版本
-    plugin_version = "0.9.2"
+    plugin_version = "0.9.3"
     # 插件作者
     plugin_author = "justzerock"
     # 作者主页
@@ -3209,6 +3209,7 @@ class MediaCoverGenerator(_PluginBase):
         elif library_type == "music":
             include_types = 'MusicAlbum,Audio'
         else:
+            # 基础类型映射
             if self.__is_single_image_style():
                 include_types = {
                     "PremiereDate": "Movie,Series",
@@ -3216,8 +3217,12 @@ class MediaCoverGenerator(_PluginBase):
                     "Random": "Movie,Series"
                 }.get(self._sort_by, "Movie,Series")
             else:
-                # 对于多图样式，始终包含 Series 而非 Episode 以获取海报
-                include_types = "Movie,Series"
+                # 对于多图样式，如果按最新入库排序（DateCreated），也要包含 Episode 以展示剧集的最新动态
+                if self._sort_by == "DateCreated":
+                    include_types = "Movie,Episode"
+                else:
+                    # 其他排序方式默认使用 Series 获取海报
+                    include_types = "Movie,Series"
             logger.debug(f"媒体库筛选类型: {include_types}, 排序方式: {self._sort_by}")
         self._seen_keys = set()
         for attempt in range(max_attempts):
@@ -3248,7 +3253,7 @@ class MediaCoverGenerator(_PluginBase):
             if self.__is_single_image_style():
                 return self.__update_single_image(service, library, title, items[0])
             else:
-                return self.__update_grid_image(service, library, title, items[:required_items if self._cover_style in ['animated_1', 'animated_2'] else 9])
+                return self.__update_grid_image(service, library, title, items[:required_items])
         else:
             logger.warning(f"媒体库 {service.name}：{library['Name']} 无法找到有效的图片项目 (筛选类型: {include_types})")
             return False
@@ -3295,7 +3300,7 @@ class MediaCoverGenerator(_PluginBase):
             if self.__is_single_image_style():
                 return self.__update_single_image(service, library, title, valid_items[0])
             else:
-                return self.__update_grid_image(service, library, title, valid_items[:required_items if self._cover_style in ['animated_1', 'animated_2'] else 9])
+                return self.__update_grid_image(service, library, title, valid_items[:required_items])
         else:
             print(f"媒体库 {service.name}：{library['Name']} 无法找到有效的图片项目")
             return False
@@ -3344,7 +3349,7 @@ class MediaCoverGenerator(_PluginBase):
             if self.__is_single_image_style():
                 return self.__update_single_image(service, library, title, valid_items[0])
             else:
-                return self.__update_grid_image(service, library, title, valid_items[:required_items if self._cover_style in ['animated_1', 'animated_2'] else 9])
+                return self.__update_grid_image(service, library, title, valid_items[:required_items])
         else:
             print(f"警告: 无法为播放列表 {service.name}：{library['Name']} 找到有效的图片项目")
             return False
@@ -3362,9 +3367,8 @@ class MediaCoverGenerator(_PluginBase):
                     sort_by = self._sort_by
                 if self._monitor_sort:
                     sort_by = 'DateCreated'
-                    # 仅在单图风格时才强制使用 Episode
-                    if self.__is_single_image_style():
-                        include_types = 'Movie,Episode'
+                    # 转移监控模式下强制包含 Episode 以获取最新入库的内容
+                    include_types = 'Movie,Episode'
                 if not include_types:
                     include_types = 'Movie,Series'
 
@@ -3498,7 +3502,7 @@ class MediaCoverGenerator(_PluginBase):
         image_paths = []
         
         updated_item_ids = []
-        for i, item in enumerate(items[:9]):
+        for i, item in enumerate(items):
             if self._event.is_set():
                 logger.info("检测到停止信号，中断图片下载 ...")
                 return False
