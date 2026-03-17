@@ -54,7 +54,7 @@ class MediaCoverGenerator(_PluginBase):
     # 插件图标
     plugin_icon = "https://raw.githubusercontent.com/justzerock/MoviePilot-Plugins/main/icons/emby.png"
     # 插件版本
-    plugin_version = "0.9.3"
+    plugin_version = "0.9.5"
     # 插件作者
     plugin_author = "justzerock"
     # 作者主页
@@ -907,6 +907,9 @@ class MediaCoverGenerator(_PluginBase):
         """
         拼装插件配置页面
         """
+        # 每次用户打开插件设置页面时，强制重置回封面生成页签，满足不记忆页签的需求
+        self._page_tab = "generate-tab"
+        
         zh_font_items, en_font_items, _, _ = self.__get_font_presets()
         # 标题配置
         title_tab = [
@@ -2228,92 +2231,98 @@ class MediaCoverGenerator(_PluginBase):
         elif not self._servers:
             setup_warnings.append("服务器配置尚未生效，请在设置页保存后重试。")
 
+        # 永远默认首先访问封面生成页，不记忆用户的最后一次Tab选择，以提升开启速度
+        page_tab = "generate-tab"
+        
+        # 仅当明确切换到了历史封面页时，才执行耗时的图片加载逻辑
         cover_rows = []
-        recent_covers = self.__get_recent_generated_covers(limit=limit)
-        if recent_covers:
-            for item in recent_covers:
-                delete_api = f"plugin/MediaCoverGenerator/delete_saved_cover?file={quote(item['path'])}"
-                cover_rows.append(
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12, "sm": 6, "md": 3},
-                        "content": [
-                            {
-                                "component": "VCard",
-                                "props": {
-                                    "variant": "flat",
-                                    "elevation": 2,
-                                    "class": "rounded-lg",
-                                },
-                                "content": [
-                                    {
-                                        "component": "VImg",
-                                        "props": {
-                                            "src": item["src"],
-                                            "aspect-ratio": "16/9",
-                                            "cover": True,
+        if self._page_tab == "history-tab":
+            page_tab = "history-tab"
+            recent_covers = self.__get_recent_generated_covers(limit=limit)
+            if recent_covers:
+                for item in recent_covers:
+                    delete_api = f"plugin/MediaCoverGenerator/delete_saved_cover?file={quote(item['path'])}"
+                    cover_rows.append(
+                        {
+                            "component": "VCol",
+                            "props": {"cols": 12, "sm": 6, "md": 3},
+                            "content": [
+                                {
+                                    "component": "VCard",
+                                    "props": {
+                                        "variant": "flat",
+                                        "elevation": 2,
+                                        "class": "rounded-lg",
+                                    },
+                                    "content": [
+                                        {
+                                            "component": "VImg",
+                                            "props": {
+                                                "src": item["src"],
+                                                "aspect-ratio": "16/9",
+                                                "cover": True,
+                                            },
                                         },
-                                    },
-                                    {
-                                        "component": "VCardText",
-                                        "props": {"class": "py-2"},
-                                        "content": [
-                                            {
-                                                "component": "VRow",
-                                                "props": {"class": "align-center", "noGutters": True},
-                                                "content": [
-                                                    {
-                                                        "component": "VCol",
-                                                        "props": {"cols": 9},
-                                                        "content": [
-                                                            {
-                                                                "component": "div",
-                                                                "props": {
-                                                                    "class": "text-body-2",
-                                                                    "style": "display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2rem; min-height: 2.4rem;"
+                                        {
+                                            "component": "VCardText",
+                                            "props": {"class": "py-2"},
+                                            "content": [
+                                                {
+                                                    "component": "VRow",
+                                                    "props": {"class": "align-center", "noGutters": True},
+                                                    "content": [
+                                                        {
+                                                            "component": "VCol",
+                                                            "props": {"cols": 9},
+                                                            "content": [
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {
+                                                                        "class": "text-body-2",
+                                                                        "style": "display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.2rem; min-height: 2.4rem;"
+                                                                    },
+                                                                    "text": item["name"],
                                                                 },
-                                                                "text": item["name"],
-                                                            },
-                                                            {
-                                                                "component": "div",
-                                                                "props": {"class": "text-caption text-medium-emphasis mt-1"},
-                                                                "text": item["size"],
-                                                            },
-                                                        ],
-                                                    },
-                                                    {
-                                                        "component": "VCol",
-                                                        "props": {"cols": 3, "class": "text-right"},
-                                                        "content": [
-                                                            {
-                                                                "component": "VBtn",
-                                                                "props": {
-                                                                    "color": "error",
-                                                                    "variant": "text",
-                                                                    "size": "small",
-                                                                    "title": "删除",
-                                                                    "class": "text-none",
+                                                                {
+                                                                    "component": "div",
+                                                                    "props": {"class": "text-caption text-medium-emphasis mt-1"},
+                                                                    "text": item["size"],
                                                                 },
-                                                                "text": "删除",
-                                                                "events": {
-                                                                    "click": {
-                                                                        "api": delete_api,
-                                                                        "method": "post",
-                                                                    }
-                                                                },
-                                                            }
-                                                        ],
-                                                    },
-                                                ],
-                                            }
-                                        ],
-                                    },
-                                ],
-                            }
-                        ],
-                    }
-                )
-        else:
+                                                            ],
+                                                        },
+                                                        {
+                                                            "component": "VCol",
+                                                            "props": {"cols": 3, "class": "text-right"},
+                                                            "content": [
+                                                                {
+                                                                    "component": "VBtn",
+                                                                    "props": {
+                                                                        "color": "error",
+                                                                        "variant": "text",
+                                                                        "size": "small",
+                                                                        "title": "删除",
+                                                                        "class": "text-none",
+                                                                    },
+                                                                    "text": "删除",
+                                                                    "events": {
+                                                                        "click": {
+                                                                            "api": delete_api,
+                                                                            "method": "post",
+                                                                        }
+                                                                    },
+                                                                }
+                                                            ],
+                                                        },
+                                                    ],
+                                                }
+                                            ],
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    )
+        elif self._page_tab == "history-tab":
             cover_rows.append(
                 {
                     "component": "VAlert",
@@ -2325,8 +2334,10 @@ class MediaCoverGenerator(_PluginBase):
                     "text": "未发现最近生成的封面文件。请先执行一次封面生成，或检查“封面另存目录”是否已配置。",
                 }
             )
+            
+        if self._page_tab == "clean-tab":
+            page_tab = "clean-tab"
 
-        page_tab = self._page_tab if self._page_tab in ["generate-tab", "history-tab", "clean-tab"] else "generate-tab"
         return [
             {
                 "component": "VCard",
@@ -2614,20 +2625,32 @@ class MediaCoverGenerator(_PluginBase):
                     continue
                 try:
                     stat = file_path.stat()
-                    mime_type = "image/jpeg"
-                    if file_path.suffix.lower() == ".png":
-                        mime_type = "image/png"
-                    elif file_path.suffix.lower() == ".gif":
-                        mime_type = "image/gif"
-                    elif file_path.suffix.lower() == ".webp":
-                        mime_type = "image/webp"
-                    elif file_path.suffix.lower() == ".apng":
-                        mime_type = "image/apng"
-
-                    with open(file_path, "rb") as image_file:
-                        image_b64 = base64.b64encode(image_file.read()).decode("utf-8")
-
-                    image_src = f"data:{mime_type};base64,{image_b64}"
+                    
+                    try:
+                        from PIL import Image
+                        from io import BytesIO
+                        import base64
+                        
+                        # 动态生成缩略图进行 Base64 传输
+                        # 1. 彻底绕开 /api/v1/plugin 外部接口存在的 401 鉴权问题
+                        # 2. 将几十 MB 的动图压缩为了几十 KB 的缩略图，解决前端加载卡死问题
+                        with Image.open(file_path) as img:
+                            if hasattr(img, 'is_animated') and img.is_animated:
+                                img.seek(0)
+                                
+                            thumb = img.copy()
+                            if thumb.mode != 'RGB':
+                                thumb = thumb.convert('RGB')
+                                
+                            thumb.thumbnail((480, 270))
+                            buf = BytesIO()
+                            thumb.save(buf, format="JPEG", quality=75)
+                            image_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                            image_src = f"data:image/jpeg;base64,{image_b64}"
+                            
+                    except Exception as img_err:
+                        logger.debug(f"生成缩略图失败 {file_path}: {img_err}")
+                        continue
 
                     items.append(
                         {
@@ -2745,6 +2768,9 @@ class MediaCoverGenerator(_PluginBase):
         if not mediainfo:
             return
             
+        # 开始前清理可能遗留的停止信号，防止阻塞监控
+        self._event.clear()
+
         # Delay
         if self._delay:
             logger.info(f"延迟 {self._delay} 秒后开始更新封面")
@@ -2871,6 +2897,7 @@ class MediaCoverGenerator(_PluginBase):
             for library in libraries:
                 if self._event.is_set():
                     logger.info("媒体库封面更新服务停止")
+                    self._event.clear()
                     return
                 if service.type == 'emby':
                     library_id = library.get("Id")
