@@ -1104,7 +1104,7 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
         text_shadow_color = darken_color(blur_color, 0.8)
         zh_font_size = float(zh_font_size) * scale
         result = draw_text_on_image(
-            result, library_ch_name, (s(73.32), s(427.34) + zh_font_size * zh_font_offset), zh_font_path, "ch.ttf", int(max(1, round(zh_font_size))),
+            result, library_ch_name, (s(73.32), s(427.34) + zh_font_size * zh_font_offset), zh_font_path, int(max(1, round(zh_font_size))),
             shadow=is_blur, shadow_color=text_shadow_color
         )
 
@@ -1156,10 +1156,10 @@ def create_style_static_3(library_dir, title, font_path, font_size=(170,75), fon
                 result,
                 library_eng_name,
                 (s(124.68), s(624.55) + s(title_spacing)),
-                en_font_path, "en.otf",
+                en_font_path,
                 int(font_size),
                 line_spacing,
-                shadow=is_blur, 
+                shadow=is_blur,
                 shadow_color=text_shadow_color,
                 is_multiline=is_multiline,
             )

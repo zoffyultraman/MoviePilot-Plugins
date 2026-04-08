@@ -844,13 +844,13 @@ def create_style_animated_3(library_dir, title, font_path, font_size=(170,75), f
         random_color = vibrant_colors[1] if len(vibrant_colors) > 1 else (random.randint(50, 200), random.randint(50, 200), random.randint(50, 200), 255)
         
         text_overlay = draw_text_on_image(
-            text_overlay, title_zh, (s(73.32), s(427.34) + zh_font_size_s * zh_font_offset), zh_font_path, "ch.ttf", zh_font_size_s,
+            text_overlay, title_zh, (s(73.32), s(427.34) + zh_font_size_s * zh_font_offset), zh_font_path, zh_font_size_s,
             shadow=is_blur, shadow_color=text_shadow_color
         )
         if title_en:
             text_overlay, line_count = draw_multiline_text_on_image(
                 text_overlay, title_en, (s(124.68), s(624.55) + s(title_spacing)),
-                en_font_path, "en.otf", en_font_size_s, s(en_line_spacing),
+                en_font_path, en_font_size_s, s(en_line_spacing),
                 shadow=is_blur, shadow_color=text_shadow_color, is_multiline=True
             )
             cb_h = int(en_font_size_s + s(en_line_spacing) + (line_count - 1) * (en_font_size_s + s(en_line_spacing)))
