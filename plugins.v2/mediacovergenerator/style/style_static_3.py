@@ -75,7 +75,7 @@ def add_shadow(img, offset=(5, 5), shadow_color=(0, 0, 0, 100), blur_radius=3):
 
 # 单行文字
 def draw_text_on_image(
-    image, text, position, font_path, default_font_path, font_size, fill_color=(255, 255, 255, 255),
+    image, text, position, font_path, font_size, fill_color=(255, 255, 255, 255),
     shadow=False, shadow_color=None, shadow_offset=10, shadow_alpha=75
 ):
     """
@@ -86,7 +86,6 @@ def draw_text_on_image(
         text: 要绘制的文字
         position: 文字位置 (x, y)
         font_path: 字体文件路径
-        default_font_path: 默认字体路径
         font_size: 字体大小
         fill_color: 文字颜色，RGBA格式
         shadow: 是否添加阴影效果
@@ -150,7 +149,6 @@ def draw_multiline_text_on_image(
     text,
     position,
     font_path,
-    default_font_path,
     font_size,
     line_spacing=10,
     fill_color=(255, 255, 255, 255),
@@ -168,7 +166,6 @@ def draw_multiline_text_on_image(
         text: 要绘制的文字
         position: 第一行文字位置 (x, y)
         font_path: 字体文件路径
-        default_font_path: 默认字体路径
         font_size: 字体大小
         line_spacing: 行间距
         fill_color: 文字颜色，RGBA格式
