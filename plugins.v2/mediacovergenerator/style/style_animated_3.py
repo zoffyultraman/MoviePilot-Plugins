@@ -11,7 +11,7 @@ from app.log import logger
 import subprocess
 import tempfile
 import shutil
-from app.plugins.mediacovergenerator.style.color_utils import (
+from app.plugins.mediacovergenerator.utils.color_utils import (
     darken_color, add_film_grain, find_dominant_vibrant_colors,
     is_not_black_white_gray_near, rgb_to_hsv, hsv_to_rgb, adjust_to_macaron
 )

@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.log import logger
-from app.plugins.mediacovergenerator.style.animation_utils import (
+from app.plugins.mediacovergenerator.utils.animation_utils import (
     _clamp, _ease_in_out_sine, _blend_rgba, _image_signature, _wrap_english
 )
 from app.plugins.mediacovergenerator.style.style_static_2 import (

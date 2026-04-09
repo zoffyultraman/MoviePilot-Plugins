@@ -10,7 +10,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.log import logger
-from app.plugins.mediacovergenerator.style.animation_utils import (
+from app.plugins.mediacovergenerator.utils.animation_utils import (
     _clamp, _ease_in_out_sine, _ease_out_back, _lerp, _blend_rgba, _image_signature
 )
 from app.plugins.mediacovergenerator.style.style_static_2 import (

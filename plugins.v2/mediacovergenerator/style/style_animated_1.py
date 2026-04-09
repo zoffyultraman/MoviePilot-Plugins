@@ -12,8 +12,8 @@ import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.log import logger
-from app.plugins.mediacovergenerator.style.color_utils import darken_color, add_film_grain
-from app.plugins.mediacovergenerator.style.animation_utils import _clamp
+from app.plugins.mediacovergenerator.utils.color_utils import darken_color, add_film_grain
+from app.plugins.mediacovergenerator.utils.animation_utils import _clamp
 from app.plugins.mediacovergenerator.utils.color_helper import ColorHelper
 
 

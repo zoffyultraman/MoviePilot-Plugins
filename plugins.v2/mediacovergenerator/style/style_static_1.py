@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 from app.log import logger
-from app.plugins.mediacovergenerator.style.color_utils import (
+from app.plugins.mediacovergenerator.utils.color_utils import (
     is_not_black_white_gray_near, rgb_to_hsv, hsv_to_rgb, darken_color, add_film_grain
 )
 from app.plugins.mediacovergenerator.utils.image_manager import (
